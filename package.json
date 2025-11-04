@@ -11,10 +11,6 @@
     "whatsapp-web.js": "^1.23.0",
     "qrcode": "^1.5.3",
     "http": "0.0.1-security",
-    "socket.io": "^4.7.5"   
+    "socket.io": "^4.7.5"
   }
 }
-
-
-
-]

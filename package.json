@@ -11,12 +11,10 @@
     "whatsapp-web.js": "^1.23.0",
     "qrcode": "^1.5.3",
     "http": "0.0.1-security",
-    "socket.io": "^4.7.5"   <--- **Yeh line add karein**
+    "socket.io": "^4.7.5"   
   }
 }
 
-**Yeh `package.json` update karke, aapko Render par *dobara deploy* karna hoga.** Is baar `npm install` ke dauran `socket.io` install ho jaega aur error theek ho jaega.
 
-***
 
-**Meri Salah:** Aap **Option 1** choose karein. Jab humein Socket.IO ki zarurat nahi hai, toh use hata dena zyada behtar hai. Isse aapka Render service stable ho jaega aur aapka main target (QR code display karna) achieve ho jaega.
+]

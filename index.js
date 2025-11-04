@@ -7,15 +7,18 @@ const http = require('http');
 const socketIo = require('socket.io');
 
 const app = express();
-const port = process.env.PORT || 3000;
+// Render environment variable use karein
+const port = process.env.PORT || 3000; 
 const server = http.createServer(app);
 const io = new socketIo.Server(server);
 
+// JSON body parser enable karein
 app.use(express.json());
 
 // CORS (Cross-Origin Resource Sharing) enable karein
-// Production mein, isko apne PythonAnywhere URL se badal dein
+// Taki PythonAnywhere se request accept ho sake
 app.use((req, res, next) => {
+    // Ye line aapke Django app ko is API tak pahunchne ki anumati degi
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -24,6 +27,15 @@ app.use((req, res, next) => {
 
 // User sessions store karne ke liye Map
 const clients = new Map();
+
+// --- Health Check Endpoint (Browser error fix) ---
+app.get('/', (req, res) => {
+    res.status(200).send({
+        status: 'OK',
+        message: 'WhatsApp Gateway API is running successfully. Use /start endpoint for connecting.'
+    });
+});
+// ----------------------------------------------------
 
 /**
  * Naya WhatsApp client instance banata hai ya existing leta hai.
@@ -50,7 +62,7 @@ function createClientInstance(userId) {
                 '--disable-accelerated-2d-canvas',
                 '--no-first-run',
                 '--no-zygote',
-                '--single-process', // Rander par single-process use karein
+                '--single-process', 
                 '--disable-gpu'
             ],
         },
@@ -61,7 +73,7 @@ function createClientInstance(userId) {
 }
 
 // ----------------------------------------------------
-// API ENDPOINTS FOR DJANGO COMMUNICATION
+// API ENDPOINT FOR DJANGO COMMUNICATION
 // ----------------------------------------------------
 
 /**
@@ -76,70 +88,72 @@ app.post('/start', async (req, res) => {
     }
 
     const client = createClientInstance(userId);
-    let qr_sent = false;
+    // Is flag ko istemaal karein yeh track karne ke liye ki response bheja gaya hai ya nahi
+    let response_sent = false; 
 
     // --- QR CODE EVENT LISTENER ---
-    // Jab QR code available hoga, use Base64 data URL mein convert karke
-    // Django ko HTTP Response mein bhej denge.
     const onQr = async (qr) => {
-        if (qr_sent) return;
+        if (response_sent) return;
 
         try {
             const qrDataURL = await qrcode.toDataURL(qr);
-            qr_sent = true; 
+            response_sent = true; 
             
             // Django ko response bhejein
             res.json({
                 status: 'QR_AVAILABLE',
                 qr_code_base64: qrDataURL,
-                message: 'Scan the QR code to connect.'
+                message: 'QR Code Scan Karein.'
             });
             
-            // Listener ko hata dein taki yeh dobara trigger na ho jab client CONNECTED ho jae
+            // Listener ko hata dein
             client.off('qr', onQr); 
 
         } catch (error) {
             console.error(`Error generating QR code for ${userId}:`, error);
-            if (!qr_sent) {
+            if (!response_sent) {
                 res.status(500).json({ status: 'ERROR', message: 'Failed to generate QR code image.' });
-                qr_sent = true;
+                response_sent = true;
             }
             client.off('qr', onQr);
         }
     };
 
-    // Agar client pehle se connected hai ya session load ho raha hai
+    // Agar client pehle se connected hai, toh turant status bhej dein
     if (client.info) {
         return res.json({ status: 'CONNECTED', message: 'Client is already connected.' });
     }
-
-    client.on('qr', onQr);
     
     // --- READY EVENT LISTENER ---
-    client.on('ready', () => {
+    const onReady = () => {
         console.log(`Client READY for user: ${userId}`);
-        // Agar client READY ho gaya hai aur QR code abhi tak nahi bheja gaya tha (matlab session saved tha)
-        if (!qr_sent) {
+        if (!response_sent) {
              res.json({ status: 'CONNECTED', message: 'Client connected successfully (session loaded).' });
-             qr_sent = true;
+             response_sent = true;
         }
-        client.off('qr', onQr); // Ready hone ke baad QR listener hatana
-    });
+        client.off('qr', onQr); 
+        client.off('ready', onReady); // Listener ko hata dein
+    };
     
     // --- AUTH FAILED LISTENER ---
-    client.on('auth_failure', (msg) => {
+    const onAuthFailure = (msg) => {
         console.error('AUTHENTICATION FAILURE', msg);
-        if (!qr_sent) {
+        if (!response_sent) {
             res.status(401).json({ status: 'AUTH_FAILED', message: 'Authentication failed. Please try re-scanning the QR.' });
-            qr_sent = true;
+            response_sent = true;
         }
         client.off('qr', onQr);
-    });
+        client.off('ready', onReady);
+        client.off('auth_failure', onAuthFailure); // Listener ko hata dein
+    };
 
+    client.on('qr', onQr);
+    client.on('ready', onReady);
+    client.on('auth_failure', onAuthFailure);
+    
     // --- DISCONNECTED LISTENER ---
     client.on('disconnected', (reason) => {
         console.log('Client was disconnected:', reason);
-        // Clean up client from map if it disconnects completely
         clients.delete(userId);
     });
 
@@ -148,36 +162,21 @@ app.post('/start', async (req, res) => {
         await client.initialize();
     } catch (e) {
         console.error(`Initialization failed for ${userId}:`, e);
-        if (!qr_sent) {
+        if (!response_sent) {
             res.status(500).json({ status: 'ERROR', message: 'Client initialization failed.' });
         }
     }
 });
 
-/**
- * Session status check karne ke liye endpoint (Django ke task file mein use hoga)
- */
-app.get('/status', (req, res) => {
-    const userId = req.query.userId;
-    const client = clients.get(userId);
 
-    if (!client) {
-        return res.json({ status: 'NOT_INITIALIZED', message: 'Client not initialized or disconnected.' });
-    }
-
-    // `info` object ka existence hi connection ka saboot hai (WhatsApp-web.js mein)
-    if (client.info) {
-        return res.json({ status: 'CONNECTED', message: `Client is connected as ${client.info.pushname}.` });
-    }
-
-    return res.json({ status: 'INITIALIZING', message: 'Client is initializing or waiting for QR scan.' });
-});
-
-// Aapka /send endpoint (pichle response se)
+// ----------------------------------------------------
+// SEND MESSAGE ENDPOINT (Aage ke step ke liye)
+// ----------------------------------------------------
 app.post('/send', async (req, res) => {
-    // ... pichle response ka /send logic yahan aega ...
+    // ... Yeh endpoint aage ke steps mein messages bhejane ke liye istemaal hoga ...
     res.status(501).json({ success: false, message: "Send logic yet to be fully implemented." });
 });
+
 
 server.listen(port, () => {
     console.log(`WhatsApp Multi-User Service running on port ${port}`);

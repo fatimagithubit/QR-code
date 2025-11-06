@@ -112,6 +112,39 @@ app.post("/disconnect", async (req, res) => {
     return res.status(500).json({ status: "ERROR", message: "Error while disconnecting." });
   }
 });
+// ===================================================================
+// ROUTE: SEND MESSAGE (Used by Django or Admin Dashboard)
+// ===================================================================
+app.post("/send-message", async (req, res) => {
+  const { userId, phone, message } = req.body;
+
+  if (!userId || !phone || !message) {
+    return res.status(400).json({
+      status: "ERROR",
+      message: "Missing required fields (userId, phone, message)",
+    });
+  }
+
+  const session = sessions[userId];
+  if (!session || !session.connected) {
+    return res.status(400).json({
+      status: "ERROR",
+      message: "No active WhatsApp session found for this user.",
+    });
+  }
+
+  try {
+    const jid = phone.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+    await session.sock.sendMessage(jid, { text: message });
+
+    console.log(`📩 Message sent to ${phone} by ${userId}: ${message}`);
+    return res.json({ status: "SUCCESS", message: "Message sent successfully!" });
+  } catch (err) {
+    console.error("❌ Message sending error:", err);
+    return res.status(500).json({ status: "ERROR", message: "Failed to send message." });
+  }
+});
+
 
 // ===================================================================
 // SERVER START
@@ -120,3 +153,4 @@ const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
   console.log(`🚀 WhatsApp Gateway running on port ${PORT}`);
 });
+

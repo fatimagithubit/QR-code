@@ -10,12 +10,15 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 const clients = {};
-
 const SESSION_DIR = "./sessions";
+
 if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR);
 
 async function createClient(userId) {
-  console.log(`Creating new client for ${userId}`);
+  console.log(`🟢 Creating new client for ${userId}`);
+
+  // Initialize record before events trigger
+  clients[userId] = { status: "initializing", qr: null, client: null };
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: String(userId), dataPath: SESSION_DIR }),
@@ -34,17 +37,22 @@ async function createClient(userId) {
     },
   });
 
-  // QR Event
+  // --- Events ---
   client.on("qr", async (qr) => {
-    const qrImage = await qrcode.toDataURL(qr);
-    clients[userId].qr = qrImage;
-    console.log(`QR generated for ${userId}`);
+    try {
+      const qrImage = await qrcode.toDataURL(qr);
+      clients[userId].qr = qrImage;
+      clients[userId].status = "qr";
+      console.log(`📱 QR generated for ${userId}`);
+    } catch (err) {
+      console.error("QR generation failed:", err);
+    }
   });
 
-  // Ready Event
   client.on("ready", () => {
-    console.log(`✅ WhatsApp client ready for ${userId}`);
     clients[userId].status = "connected";
+    clients[userId].qr = null;
+    console.log(`✅ WhatsApp client ready for ${userId}`);
   });
 
   client.on("disconnected", (reason) => {
@@ -54,23 +62,28 @@ async function createClient(userId) {
     delete clients[userId];
   });
 
-  await client.initialize();
-  clients[userId] = { client, status: "initializing" };
+  clients[userId].client = client;
+
+  try {
+    await client.initialize();
+  } catch (err) {
+    console.error(`❌ Initialization failed for ${userId}:`, err);
+    clients[userId].status = "error";
+  }
 }
 
-// Start Session
+// --- API Routes ---
+
 app.post("/start", async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
   if (!clients[userId]) await createClient(userId);
 
-  const qr = clients[userId]?.qr || null;
-  const status = clients[userId]?.status || "initializing";
-  res.json({ status, qr });
+  const data = clients[userId];
+  res.json({ status: data.status, qr: data.qr });
 });
 
-// Status
 app.get("/status", (req, res) => {
   const userId = req.query.userId;
   const clientData = clients[userId];
@@ -79,18 +92,19 @@ app.get("/status", (req, res) => {
   res.json({ status: clientData.status || "unknown" });
 });
 
-// Disconnect
 app.post("/disconnect", async (req, res) => {
   const { userId } = req.body;
-  if (clients[userId]) {
-    await clients[userId].client.destroy();
+  const clientData = clients[userId];
+  if (clientData) {
+    await clientData.client.destroy();
     delete clients[userId];
     return res.json({ status: "disconnected" });
   }
   res.json({ status: "already_disconnected" });
 });
 
-// Root
 app.get("/", (_, res) => res.send("✅ WhatsApp Gateway running!"));
 
-app.listen(PORT, () => console.log(`✅ WhatsApp Gateway running on port ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 WhatsApp Gateway active on port ${PORT}`)
+);

@@ -12,5 +12,6 @@
     "qrcode": "^1.5.3",
     "http": "0.0.1-security",
     "socket.io": "^4.7.5"
+    "puppeteer": "^23.3.0"
   }
 }

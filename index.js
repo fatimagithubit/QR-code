@@ -11,8 +11,8 @@ const port = process.env.PORT || 3000;
 const server = http.createServer(app);
 
 app.use(express.json());
-
-// ✅ CORS Enabled (for Django or any frontend)
+const cors = require('cors');
+app.use(cors({ origin: '*' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -206,3 +206,4 @@ app.post('/disconnect', async (req, res) => {
 server.listen(port, () => {
   console.log(`✅ WhatsApp Gateway running on port ${port}`);
 });
+

@@ -14,7 +14,7 @@
     "http": "0.0.1-security",
     "socket.io": "^4.7.5",
     "puppeteer": "^23.3.0",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
     "@whiskeysockets/baileys": "^6.7.9",
     "@hapi/boom": "^10.0.1"
   }

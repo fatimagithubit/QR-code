@@ -15,6 +15,6 @@
     "socket.io": "^4.7.5",
     "puppeteer": "^23.3.0",
     "cors": "^2.8.5",
-    
+    "@whiskeysockets/baileys": "^6.7.9"
   }
 }

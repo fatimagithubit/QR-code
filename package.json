@@ -2,6 +2,7 @@
   "name": "qr-code-service",
   "version": "1.0.0",
   "description": "WhatsApp QR Code Gateway",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

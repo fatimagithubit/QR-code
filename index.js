@@ -150,7 +150,10 @@ app.post("/send-message", async (req, res) => {
 // SERVER START
 // ===================================================================
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`🚀 WhatsApp Gateway running on port ${PORT}`);
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ WhatsApp Gateway successfully running on Render at port ${PORT}`);
 });
+
+
 

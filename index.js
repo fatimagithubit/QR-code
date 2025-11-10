@@ -1,159 +1,67 @@
-import express from "express";
-import cors from "cors";
-import qrcode from "qrcode";
-import { Boom } from "@hapi/boom";
-import { makeWASocket, useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
+const express = require("express");
+const { Client, LocalAuth } = require("whatsapp-web.js");
+const qrcode = require("qrcode");
+const http = require("http");
+const { Server } = require("socket.io");
+const path = require("path");
+const fs = require("fs");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
 
-const sessions = {}; // store active sessions per user
+const PORT = process.env.PORT || 10000;
 
-// ===================================================================
-// FUNCTION: CREATE NEW WHATSAPP SESSION
-// ===================================================================
-async function createSession(userId) {
-  const { state, saveCreds } = await useMultiFileAuthState(`./auth/${userId}`);
-  const sock = makeWASocket({
-    printQRInTerminal: false,
-    auth: state,
-    browser: ["Dabang Web", "Chrome", "Windows"],
+// Folder for WhatsApp session data
+const sessionDir = path.join(__dirname, "sessions");
+if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir);
+
+// Simple homepage
+app.get("/", (req, res) => {
+  res.send("<h2>🚀 WhatsApp QR Service is Running Successfully!</h2>");
+});
+
+io.on("connection", (socket) => {
+  console.log("New client connected ✅");
+
+  const client = new Client({
+    authStrategy: new LocalAuth({
+      clientId: "user-1",
+      dataPath: sessionDir,
+    }),
+    puppeteer: {
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      headless: true,
+    },
   });
 
-  sessions[userId] = { sock, qr: null, connected: false };
-
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      sessions[userId].qr = await qrcode.toDataURL(qr);
-    }
-
-    if (connection === "open") {
-      sessions[userId].connected = true;
-      sessions[userId].qr = null;
-      console.log(`✅ ${userId} connected successfully`);
-    } else if (connection === "close") {
-      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      console.log(`❌ ${userId} disconnected: ${reason}`);
-
-      if (reason !== DisconnectReason.loggedOut) {
-        setTimeout(() => createSession(userId), 5000);
-      } else {
-        delete sessions[userId];
-      }
-    }
+  client.on("qr", async (qr) => {
+    const qrImage = await qrcode.toDataURL(qr);
+    socket.emit("qr", qrImage);
+    console.log("📸 QR Code generated");
   });
 
-  sock.ev.on("creds.update", saveCreds);
-}
+  client.on("ready", () => {
+    socket.emit("ready", "WhatsApp is connected ✅");
+    console.log("✅ WhatsApp connected");
+  });
 
-// ===================================================================
-// ROUTE: START SESSION (GENERATE QR OR CONNECT)
-// ===================================================================
-app.post("/start", async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ status: "ERROR", message: "Missing userId" });
+  client.on("disconnected", (reason) => {
+    socket.emit("disconnected", reason);
+    console.log("❌ Disconnected:", reason);
+  });
 
-  try {
-    if (!sessions[userId]) {
-      await createSession(userId);
-      return res.json({ status: "INITIALIZING", message: "Starting WhatsApp session..." });
-    }
-    return res.json({ status: "RUNNING", message: "Session already active." });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ status: "ERROR", message: err.message });
-  }
+  client.initialize();
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected ❎");
+  });
 });
 
-// ===================================================================
-// ROUTE: STATUS CHECK
-// ===================================================================
-app.get("/status", (req, res) => {
-  const userId = req.query.userId;
-  if (!userId) return res.status(400).json({ status: "ERROR", message: "Missing userId" });
-
-  const session = sessions[userId];
-  if (!session) return res.json({ status: "DISCONNECTED" });
-
-  if (session.connected) {
-    return res.json({
-      status: "CONNECTED",
-      connection_info: { name: userId },
-    });
-  } else if (session.qr) {
-    return res.json({
-      status: "QR_READY",
-      qr: session.qr.split(",")[1], // base64 image for Django
-    });
-  } else {
-    return res.json({ status: "INITIALIZING" });
-  }
-});
-
-// ===================================================================
-// ROUTE: DISCONNECT SESSION
-// ===================================================================
-app.post("/disconnect", async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ status: "ERROR", message: "Missing userId" });
-
-  const session = sessions[userId];
-  if (!session) return res.json({ status: "DISCONNECTED" });
-
-  try {
-    await session.sock.logout();
-    delete sessions[userId];
-    return res.json({ status: "DISCONNECTED", message: "Session disconnected successfully." });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ status: "ERROR", message: "Error while disconnecting." });
-  }
-});
-// ===================================================================
-// ROUTE: SEND MESSAGE (Used by Django or Admin Dashboard)
-// ===================================================================
-app.post("/send-message", async (req, res) => {
-  const { userId, phone, message } = req.body;
-
-  if (!userId || !phone || !message) {
-    return res.status(400).json({
-      status: "ERROR",
-      message: "Missing required fields (userId, phone, message)",
-    });
-  }
-
-  const session = sessions[userId];
-  if (!session || !session.connected) {
-    return res.status(400).json({
-      status: "ERROR",
-      message: "No active WhatsApp session found for this user.",
-    });
-  }
-
-  try {
-    const jid = phone.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
-    await session.sock.sendMessage(jid, { text: message });
-
-    console.log(`📩 Message sent to ${phone} by ${userId}: ${message}`);
-    return res.json({ status: "SUCCESS", message: "Message sent successfully!" });
-  } catch (err) {
-    console.error("❌ Message sending error:", err);
-    return res.status(500).json({ status: "ERROR", message: "Failed to send message." });
-  }
-});
-
-
-// ===================================================================
-// SERVER START
-// ===================================================================
-const PORT = process.env.PORT || 8000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ WhatsApp Gateway successfully running on Render at port ${PORT}`);
-});
-
-
-
+server.listen(PORT, () =>
+  console.log(`🚀 WhatsApp Gateway running on port ${PORT}`)
+);
